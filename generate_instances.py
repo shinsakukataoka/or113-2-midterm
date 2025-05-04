@@ -38,7 +38,6 @@ def load_base_data():
     # Holding cost = 2% of purchasing cost, as stated in text (verify table values)
     # Table values: 100, 40, 180, 180, 40, 180, 140, 100, 180, 140
     # Purchase costs: 5k, 2k, 9k, 9k, 2k, 9k, 7k, 5k, 9k, 7k
-    # 2% rule check: 5k*0.02=100, 2k*0.02=40, 9k*0.02=180 - It matches!
     data['purchase_cost_per_unit'] = np.array([
         5000, 2000, 9000, 9000, 2000, 9000, 7000, 5000, 9000, 7000
     ]).astype(float)
@@ -46,14 +45,12 @@ def load_base_data():
         100, 40, 180, 180, 40, 180, 140, 100, 180, 140
     ]).astype(float)
     # Ignoring Sales price, Backorder cost/percentage for now
-
     # --- Data from 'Shipping cost' Sheet ---
     # Product Express delivery Air freight Cubic meter
     # 1 44 18 0.073
     # ... (10 products)
     # Variable costs for Express (j=0) and Air (j=1)
     data['shipping_variable_cost'] = np.array([
-        # Express, Air
         [44, 18],  # Prod 1
         [89, 45],  # Prod 2
         [86, 38],  # Prod 3
@@ -70,10 +67,8 @@ def load_base_data():
         0.073, 0.005, 0.043, 0.063, 0.045, 0.086, 0.079, 0.082, 0.068, 0.098
     ]).astype(float)
 
-    # --- Data from 'In-transit' Sheet ---
     # Product End of March End of April
     # 1 0 0
-    # ... (10 products)
     # Map to arrivals at START of month t. T_MONTHS = 6 (0..5)
     # End of March -> arrives start April (t=1)
     # End of April -> arrives start May (t=2)
@@ -90,7 +85,6 @@ def load_base_data():
             in_transit_array[i, 2] = in_transit_raw[prod_id][1] # End of April -> arrives start t=2
     data['in_transit'] = in_transit_array.astype(float)
 
-    # --- Fixed Costs and Parameters (from problem description/previous code) ---
     # Fixed Costs F: Express, Air, Ocean
     data['shipping_fixed_cost'] = np.array([100.0, 80.0, 50.0])
     # Ocean container cost C
@@ -107,7 +101,6 @@ def load_base_data():
     print("Base data loaded manually.") # Confirmation message
     return data
 
-# --- Instance Generation Logic (Remains the same) ---
 def generate_instance_data(base_data, scenario_id, instance_id):
     """Generates data for a specific instance based on scenario."""
     data = {}
@@ -121,7 +114,6 @@ def generate_instance_data(base_data, scenario_id, instance_id):
 
     rng = np.random.RandomState(seed=scenario_id * 100 + instance_id) # Seed for reproducibility
 
-    # --- Apply Scenario Variations ---
     # Scenario 1: Base Case (add minor noise)
     if scenario_id == 1:
         data['demand'] = np.maximum(0, data['demand'] * rng.uniform(0.95, 1.05, size=data['demand'].shape)).astype(int)
@@ -154,8 +146,7 @@ def generate_instance_data(base_data, scenario_id, instance_id):
     elif scenario_id == 7:
         data['initial_inventory'] = np.maximum(0, data['initial_inventory'] * rng.uniform(1.5, 2.0)).astype(int)
 
-    # --- Ensure data consistency (optional checks) ---
-    # e.g., ensure costs are non-negative
+    # ensure costs are non-negative
     data['holding_cost_per_unit'] = np.maximum(0, data['holding_cost_per_unit'])
     data['shipping_variable_cost'] = np.maximum(0, data['shipping_variable_cost'])
     data['shipping_fixed_cost'] = np.maximum(0, data['shipping_fixed_cost'])
@@ -164,11 +155,9 @@ def generate_instance_data(base_data, scenario_id, instance_id):
 
     return data
 
-# --- Main Script (Remains the same) ---
 if __name__ == "__main__":
     print("Loading base data...")
     base_data = load_base_data() # Now calls the function with manual data
-
     print(f"Generating instances in folder '{INSTANCE_FOLDER}'...")
     os.makedirs(INSTANCE_FOLDER, exist_ok=True)
 
