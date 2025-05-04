@@ -3,13 +3,14 @@ import pandas as pd
 import numpy as np
 import os
 import time
-from Problem5.solver_lp import solve_lp
-from Problem5.solver_proposed import solve_proposed
-from Problem5.solver_naive import solve_naive
+from solver_lp import solve_lp
+from solver_proposed import solve_proposed
+from solver_naive import solve_naive
 
 # --- Configuration ---
 INSTANCE_FOLDER = "instances"
-RESULTS_FILE = "experiment_results.csv"
+OUTPUT_FOLDER   = "output"
+RESULTS_FILE    = os.path.join(OUTPUT_FOLDER, "p5_results.csv")
 NUM_SCENARIOS = 7
 NUM_INSTANCES_PER_SCENARIO = 30
 
