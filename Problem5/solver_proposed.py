@@ -195,4 +195,3 @@ def solve_proposed(data):
         import traceback
         traceback.print_exc()
         return float('inf')
-
