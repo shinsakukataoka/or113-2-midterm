@@ -31,7 +31,7 @@ def fractional_knapsack(capacity, max_items):
     return selected_items
 
 # Read the Excel file from the 'Demand' sheet
-file_path = "OR113-2_midtermProject_data.xlsx"
+file_path = "./data/OR113-2_midtermProject_data.xlsx"
 df_demand = pd.read_excel(file_path, sheet_name="Demand")
 N = df_demand.shape[0] - 1  # Number of products
 T = df_demand.shape[1] - 2  # Number of months
