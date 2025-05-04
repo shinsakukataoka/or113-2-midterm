@@ -1,0 +1,2 @@
+- for problem4: run Problem4/p4.py
+- for problem5: run generate_instances.py and then run run_experiment.py
