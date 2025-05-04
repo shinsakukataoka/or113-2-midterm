@@ -1,20 +1,7 @@
-# Problem5/solver_proposed.py
 import numpy as np
 import math
 
 def fractional_knapsack(capacity, values_per_unit, weights_per_unit, max_items):
-    """
-    Solves the fractional knapsack problem.
-
-    Args:
-        capacity: Total capacity of the knapsack.
-        values_per_unit: List/array of values per unit for each item type.
-        weights_per_unit: List/array of weights per unit for each item type.
-        max_items: List/array of the maximum available quantity for each item type.
-
-    Returns:
-        numpy array: Quantity of each item type selected.
-    """
     n_items = len(values_per_unit)
     # Calculate value-to-weight ratio, handle division by zero if weight is zero
     ratios = [values_per_unit[i] / weights_per_unit[i] if weights_per_unit[i] > 0 else float('inf')

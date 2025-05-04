@@ -1,163 +1,136 @@
-import pulp
+import gurobipy as gp
+from gurobipy import GRB
 import numpy as np
 
 def solve_lp(data):
     try:
-        N = data['N_PRODUCTS'] # Number of products
-        T = data['T_MONTHS']   # Number of months (planning horizon)
-        J = 3                  # Number of shipping methods (0: Exp, 1: Air, 2: Ocean)
+        N        = int(data['N_PRODUCTS'])
+        T        = int(data['T_MONTHS'])
+        J        = 3                                  # 0-Exp, 1-Air, 2-Ocean
 
-        product_indices = list(range(N)) # [0, 1, ..., N-1]
-        month_indices = list(range(T))   # [0, 1, ..., T-1]
-        method_indices = list(range(J))  # [0, 1, 2]
+        D        = data['demand']                     # (N, T)
+        I0       = data['initial_inventory']          # (N,)
+        transit  = data['in_transit']               # (N, T)
 
-        D = data['demand']                     # Demand (N x T)
-        I0 = data['initial_inventory']         # Initial Inventory (N)
-        transit = data['in_transit']           # In-transit inventory (N x T)
-        h = data['holding_cost_per_unit']      # Holding cost (N)
-        p = data['purchase_cost_per_unit']     # Purchase cost (N)
-        svc = data['shipping_variable_cost']   # Shipping variable cost (N x 2) [Express, Air]
-        sfc = data['shipping_fixed_cost']      # Shipping fixed cost (J)
-        vol = data['volume_cbm']               # Volume per unit (N)
-        ocean_cc = data['ocean_container_cost'] # Ocean container cost
-        ocean_cap = data['ocean_container_capacity_cbm'] # Ocean container capacity
-        lead_times = data['lead_times']        # Lead times (J) [Express, Air, Ocean]
+        CH       = data['holding_cost_per_unit']      # (N,)
+        CP       = data['purchase_cost_per_unit']     # (N,)
+
+        svc      = data['shipping_variable_cost']     # (N, 2) [Express, Air]
+        # Ensure correct dimensions for variable costs including ocean (which is 0)
+        CV = np.hstack((svc, np.zeros((N, 1))))       # (N, 3) [Exp, Air, Ocean]
+
+        CF       = data['shipping_fixed_cost']        # (3,) [Exp, Air, Ocean]
+        vol      = data['volume_cbm']                 # (N,)
+
+        ocean_cc = float(data['ocean_container_cost'])
+        ocean_cap= float(data['ocean_container_capacity_cbm'])
+        lead     = data['lead_times']                 # (3,) e.g. [1, 2, 3]
+
+        # Define index lists for clarity
+        product_indices = list(range(N))
+        method_indices = list(range(J))
+        month_indices = list(range(T))
 
     except KeyError as e:
-        print(f"Error: Missing key in instance_data: {e}")
-        return float('inf'), "Data Error"
+        print(f"Error: Missing key in instance_data for LP: {e}")
+        return float('inf'), f"Data key missing: {e}"
     except Exception as e:
         print(f"Error unpacking data in solve_lp: {e}")
-        return float('inf'), "Data Error"
+        return float('inf'), f"Data unpacking error: {e}"
 
-    # Create the LP problem
-    prob = pulp.LpProblem("Inventory_Planning_LP", pulp.LpMinimize)
-
-    # --- Decision Variables ---
-    # Order quantities: x[i][j] = quantity of product i ordered via method j at start of month m=0
-    # Use the explicit index lists - PuLP creates nested dicts: dict[i][j]
-    order_vars = pulp.LpVariable.dicts("Order", (product_indices, method_indices), lowBound=0, cat='Continuous')
-
-    # Inventory level: I[i][t] = inventory of product i at the *end* of month t
-    inv_vars = pulp.LpVariable.dicts("Inventory", (product_indices, month_indices), lowBound=0, cat='Continuous')
-
-    # Ocean containers: z = number of ocean containers used (ordered month 0)
-    ocean_containers = pulp.LpVariable("OceanContainers", lowBound=0, cat='Continuous')
-
-    # Auxiliary for fixed costs (Relaxation: continuous [0,1])
-    use_method = pulp.LpVariable.dicts("UseMethod", method_indices, lowBound=0, upBound=1, cat='Continuous')
-
-
-    # --- Objective Function ---
-    # Minimize: Purchase Cost + Shipping Cost (Var + Fixed) + Holding Cost
+    # ---------------- model -----------------------------------------------
     try:
-        # Access variables using nested dictionary style: [i][j]
-        purchase_cost = pulp.lpSum(order_vars[i][j] * p[i] for i in product_indices for j in method_indices)
+        m = gp.Model("LP_SingleDecision")
+        m.setParam("OutputFlag", 0) # Suppress Gurobi output
 
-        shipping_var_cost_exp_air = pulp.lpSum(order_vars[i][j] * svc[i, j] for i in product_indices for j in method_indices if j < 2) # Express(0), Air(1)
-        # Ocean variable cost is tied to container cost, handled below
+        # --- Variables ---
+        # x[i,j]: Order quantity of product i via method j placed ONLY at t=0
+        x = m.addVars(N, J, vtype=GRB.CONTINUOUS, name="x", lb=0.0)
+        # v[i,t]: Inventory level of product i at the END of period t
+        v = m.addVars(N, T, vtype=GRB.CONTINUOUS, name="v", lb=0.0)
+        # y[j]: 1 if shipping method j is used at t=0, 0 otherwise (relaxed)
+        y = m.addVars(J, vtype=GRB.CONTINUOUS, name="y", lb=0.0, ub=1.0)
+        # z: Number of ocean containers used for orders placed at t=0 (relaxed)
+        z = m.addVar(vtype=GRB.CONTINUOUS, name="z", lb=0.0)
 
-        shipping_fixed_cost = pulp.lpSum(use_method[j] * sfc[j] for j in method_indices)
-        ocean_shipping_cost = ocean_containers * ocean_cc
+        # --- Objective Function ---
+        # Sum of: Purchase Cost (t=0) + Variable Shipping (t=0) + Fixed Shipping (t=0)
+        #         + Ocean Container Cost (t=0) + Total Holding Cost (t=0..T-1)
 
-        # Access inventory variables using nested dictionary style: [i][t]
-        holding_cost = pulp.lpSum(inv_vars[i][t] * h[i] for i in product_indices for t in month_indices)
+        purchase_cost = gp.quicksum(CP[i] * x[i,j] for i in product_indices for j in method_indices)
+        ship_var_cost = gp.quicksum(CV[i,j] * x[i,j] for i in product_indices for j in method_indices)
+        ship_fix_cost = gp.quicksum(CF[j] * y[j] for j in method_indices)
+        cont_cost     = ocean_cc * z
+        hold_cost     = gp.quicksum(CH[i] * v[i,t] for i in product_indices for t in month_indices)
 
-        prob += purchase_cost + shipping_var_cost_exp_air + ocean_shipping_cost + shipping_fixed_cost + holding_cost, "Total_Cost"
+        m.setObjective(purchase_cost + ship_var_cost + ship_fix_cost + cont_cost + hold_cost, GRB.MINIMIZE)
 
-    except KeyError as e:
-         # Simplified error message as loop variables might not be set
-         print(f"Error accessing variable or parameter in objective function. Potential key issue: {e}")
-         return float('inf'), "Objective Error"
-    except IndexError as e:
-         # Determine which index might be out of bounds if possible (tricky here)
-         print(f"Error: Index out of bounds in objective function: {e}")
-         return float('inf'), "Objective Error"
-    except Exception as e:
-        print(f"Error building objective function: {e}")
-        return float('inf'), "Objective Error"
-
-
-    # --- Constraints ---
-    try:
+        # --- Constraints ---
+        # Inventory Balance Constraints
         for i in product_indices:
             for t in month_indices:
-                # Inventory Balance: I[i][t] = I[i, t-1] + Arrivals[i,t] - Demand[i,t]
-                if t == 0:
-                    prev_inv = I0[i]
-                else:
-                    # Access inventory variables using nested dictionary style: [i][t-1]
-                    prev_inv = inv_vars[i][t-1]
-
-                # Calculate arrivals *during* month t (available at start of t)
-                arrivals_in_month_t = transit[i, t] # In-transit scheduled to arrive start of month t
-                # Add arrivals from orders placed at m=0
+                # Arrivals AT START of period t from orders placed at t=0
+                arrivals_t = transit[i, t] # In-transit arriving start of t
                 for j in method_indices:
-                     # Order placed month 0, lead time L -> arrives start of month L (index L)
-                     arrival_month_index = lead_times[j]
-                     if arrival_month_index == t: # Arrives start of current month t
-                          # Access order variables using nested dictionary style: [i][j]
-                          arrivals_in_month_t += order_vars[i][j]
+                    # Order placed month 0, lead time L -> arrives start of month L (index L)
+                    # Check if current month 't' is the arrival month for method j
+                    if lead[j] == t:
+                        arrivals_t += x[i,j]
 
-                # Demand is met by inventory at start of month + arrivals during month
-                # Inventory at end of month t is what's left over
-                # Access inventory variables using nested dictionary style: [i][t]
-                prob += inv_vars[i][t] == prev_inv + arrivals_in_month_t - D[i, t], f"InvBalance_{i}_{t}"
+                # Balance equation
+                if t == 0:
+                    m.addConstr(v[i,0] == I0[i] + arrivals_t - D[i,0], name=f"InvBal_{i}_0")
+                else:
+                    m.addConstr(v[i,t] == v[i,t-1] + arrivals_t - D[i,t], name=f"InvBal_{i}_{t}")
+                # Note: No service level constraint v[i,t-1] >= D[i,t] included here
+                # as it wasn't in the original PuLP formulation for P5 comparison.
+                # Add it if required by problem interpretation.
 
-        # Ocean Capacity Constraint
-        # Access order variables using nested dictionary style: [i][2]
-        total_ocean_volume = pulp.lpSum(order_vars[i][2] * vol[i] for i in product_indices) # j=2 is Ocean
-        prob += total_ocean_volume <= ocean_containers * ocean_cap, "OceanCapacity"
+        # Ocean Capacity Constraint (for orders placed at t=0)
+        if ocean_cap > 0:
+            m.addConstr(gp.quicksum(vol[i] * x[i,2] for i in product_indices) <= ocean_cap * z, name="OceanCap")
+        else:
+             # If capacity is zero, no ocean orders allowed
+             m.addConstr(gp.quicksum(x[i,2] for i in product_indices) == 0, name="NoOcean")
 
-        # Linking Constraints for Fixed Costs (Relaxed)
-        BIG_M = 1e7 # A reasonably large number
+
+        # Linking Constraints for Fixed Costs (Big-M)
+        # Estimate M: Sum of all demand could be an upper bound on total ordered quantity
+        M = D.sum() * 1.1 # A slightly larger value than total demand
+
         for j in method_indices:
-             # Access order variables using nested dictionary style: [i][j]
-             prob += pulp.lpSum(order_vars[i][j] for i in product_indices) <= BIG_M * use_method[j], f"LinkUseMethod_{j}"
+            # If sum(x[i,j]) > 0, then y[j] must be > 0 (objective forces it towards 1 if CF[j]>0)
+            m.addConstr(gp.quicksum(x[i,j] for i in product_indices) <= M * y[j], name=f"LinkFixedCost_{j}")
 
-        # Special link for Ocean: If any ocean orders exist, ocean_containers must be > 0
-        # Access order variables using nested dictionary style: [i][2]
-        prob += pulp.lpSum(order_vars[i][2] for i in product_indices) <= BIG_M * ocean_containers, "LinkOceanContainers"
-        # The LinkUseMethod_2 constraint above already links ocean orders to use_method[2]
+        # Link ocean orders to ocean container variable z
+        # If sum(x[i,2]) > 0, then z must be > 0
+        m.addConstr(gp.quicksum(x[i,2] for i in product_indices) <= M * z, name="LinkOceanCont")
+        # Also ensure ocean fixed cost flag y[2] is linked
+        # The LinkFixedCost_2 constraint above already handles this.
 
-    except KeyError as e:
-         # Simplified error message as loop variables might not be set
-         print(f"Error accessing variable or parameter in constraints. Potential key issue: {e}")
-         return float('inf'), "Constraint Error"
-    except IndexError as e:
-         # Determine which index might be out of bounds if possible (tricky here)
-         print(f"Error: Index out of bounds in constraints: {e}")
-         return float('inf'), "Constraint Error"
+        # --- Solve ---
+        m.optimize()
+
+        # --- Results ---
+        status = m.Status
+        if status == GRB.OPTIMAL:
+            return m.objVal, "Optimal"
+        elif status == GRB.INFEASIBLE:
+            print(f"Warning: LP (Gurobi SingleDecision) Infeasible for instance.")
+            return float('inf'), "Infeasible"
+        elif status == GRB.UNBOUNDED:
+            print(f"Warning: LP (Gurobi SingleDecision) Unbounded for instance.")
+            return float('inf'), "Unbounded"
+        else:
+            print(f"Warning: LP (Gurobi SingleDecision) finished with status {status}")
+            return float('inf'), f"Gurobi status {status}"
+
+    except gp.GurobiError as e:
+        print(f"Gurobi error code {e.errno}: {e}")
+        return float('inf'), f"Gurobi Error {e.errno}"
     except Exception as e:
-        print(f"Error building constraints: {e}")
+        print(f"Error building/solving Gurobi LP model: {e}")
         import traceback
         traceback.print_exc()
-        return float('inf'), "Constraint Error"
+        return float('inf'), f"Model Build/Solve Error: {e}"
 
-    # --- Solve ---
-    try:
-        # Using the default CBC solver included with PuLP
-        solver = pulp.PULP_CBC_CMD(msg=0) # msg=0 suppresses solver output
-        prob.solve(solver)
-    except Exception as e:
-        print(f"Error during PuLP solve step: {e}")
-        # Could indicate solver not found or other runtime issue
-        return float('inf'), "Solver Error"
-
-    # --- Extract Results ---
-    status = pulp.LpStatus[prob.status]
-    if prob.status == pulp.LpStatusOptimal:
-        objective_value = pulp.value(prob.objective)
-        return objective_value, "Optimal"
-    elif prob.status == pulp.LpStatusNotSolved:
-         print("Warning: LP solver did not solve the problem.")
-         return float('inf'), "Not Solved"
-    elif prob.status == pulp.LpStatusInfeasible:
-         print("Warning: LP problem is infeasible.")
-         return float('inf'), "Infeasible"
-    elif prob.status == pulp.LpStatusUnbounded:
-         print("Warning: LP problem is unbounded.")
-         return float('inf'), "Unbounded"
-    else: # Undefined, etc.
-         print(f"Warning: LP solver finished with status: {status}")
-         return float('inf'), status
