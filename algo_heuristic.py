@@ -1,42 +1,35 @@
 import numpy as np
 
-def express_cost(q, cv1, cf):
-    """q : (N,) quantities shipped express in a month"""
-    return (q @ cv1) + (cf[0] if q.sum() > 0 else 0.0)
+def express_cost(products, cv1, cf):
+    return np.dot(products, cv1) + (cf[0] if products.sum() > 0 else 0.0)
 
 
-def air_cost(q, cv2, cf):
-    """q : (N,) quantities shipped air in a month"""
-    return (q @ cv2) + (cf[1] if q.sum() > 0 else 0.0)
+def air_cost(products, cv2, cf):
+    return np.dot(products, cv2) + (cf[1] if products.sum() > 0 else 0.0)
 
-def ocean_cost(containers, cont_cost, cf):
-    return containers * cont_cost + (cf[2] if containers > 0 else 0.0)
+
+def ocean_cost(num_containers, cont_cost, cf):
+    return num_containers * cont_cost + (cf[2] if num_containers > 0 else 0.0)
 
 def fractional_knapsack(capacity, volumes, prices, max_items):
-    """
-    Greedy fill on price/vol ratio (exactly the logic in the Excel script).
-    Returns an (N,) vector of selected quantities.
-    """
-    items = [
-        (i, prices[i] / volumes[i] if volumes[i] > 0 else 0.0)
-        for i in range(len(volumes))
-    ]
-    items.sort(key=lambda x: x[1], reverse=True)
+    #volumes = V
+    #prices = C["V"][:, 1]
+    items = [(i, prices[i], volumes[i], prices[i] / volumes[i] if volumes[i] > 0 else 0) for i in range(len(volumes))]
+    items.sort(key=lambda tup: tup[3], reverse=True)
 
-    remaining = capacity
-    picked    = np.zeros_like(max_items, dtype=float)
+    remaining_capacity = capacity
+    selected_items = np.zeros_like(max_items, dtype=float)
 
-    for i, _ in items:
-        if remaining <= 0:
+    for i, price, vol, ratio in items:
+        if remaining_capacity <= 0:
             break
-        take = min(max_items[i], remaining / volumes[i]) if volumes[i] > 0 else 0
-        picked[i]  += take
-        remaining  -= take * volumes[i]
+        if vol <= 0:
+            continue
+        can_take = min(max_items[i], remaining_capacity / vol)
+        selected_items[i] += can_take
+        remaining_capacity -= can_take * vol
 
-    return picked
-
-
-# ---------- main heuristic cost -------------------------------------------
+    return selected_items
 
 def heuristic_cost(
     N, T, D, I0, I,
@@ -44,75 +37,70 @@ def heuristic_cost(
     Vi, cont_cost,
     container_capacity=30
 ):
-    """
-    Parameters mirror what `main_experiment.py` passes.
-
-    Returns
-    -------
-    total_cost : float
-    """
-    # ------------------ 1. pre-compute shortages & holding cost -------------
-    missing = np.zeros((N, T))
-    current_inv   = I0.copy()
-    holding_cost  = 0.0
+    missing_inventory = np.zeros((N, T))
+    current_inventory = I0.copy()
+    holding_cost_acc  = 0.0
 
     for t in range(T):
-        current_inv += I[:, t]                       # arrivals at start of month
-        remaining    = current_inv - D[:, t]
-        missing[:, t] = np.maximum(-remaining, 0)
-        current_inv   = np.maximum(remaining, 0)     # carry-over
-        holding_cost += current_inv @ CH             # charge end-of-month inv
+        current_inventory += I[:, t]                       # arrivals at start
+        remaining = current_inventory - D[:, t]            # after demand
+        missing_inventory[:, t] = np.maximum(-remaining, 0)
+        current_inventory = np.maximum(remaining, 0)       # carry-over
+        holding_cost_acc += np.dot(current_inventory, CH)  # end-month charge
 
-    # ------------------ 2. month-level decisions ----------------------------
-    total_cost = 0.0
+    total_cost = 0
 
-    # month indices: t = 0 → March, 1 → April, 2 → May, …
-    # Express for April (t = 1)
+    # — Express for April shortages (t = 1) —
     if T > 1:
-        q_exp = missing[:, 1]
-        total_cost += express_cost(q_exp, CV1, CF)
+        express_for_april = missing_inventory[:, 1]
+        total_cost += express_cost(express_for_april, CV1, CF)
 
-    # Air for May (t = 2)
+    # — Air for May shortages (t = 2) —
     if T > 2:
-        q_air = missing[:, 2]
-        total_cost += air_cost(q_air, CV2, CF)
+        air_for_may = missing_inventory[:, 2]
+        total_cost += air_cost(air_for_may, CV2, CF)
 
-    # Months ≥ 4  (t ≥ 3) – ocean first, then residual decision
+    # — From June onward (t ≥ 3): ocean first, decide leftovers —
     for t in range(3, T):
-        need           = missing[:, t].copy()
-        weight         = need @ Vi
-        containers     = int(weight // container_capacity)
+        need_t = missing_inventory[:, t].copy()
 
-        picked = fractional_knapsack(
-            containers * container_capacity,
+        # How many full containers can we fill?
+        total_volume = np.dot(need_t, Vi)
+        full_containers = int(total_volume // container_capacity)
+
+        # Use fractional knapsack to fill those containers optimally
+        packed = fractional_knapsack(
+            full_containers * container_capacity,
             volumes=Vi,
-            prices=CV2,        # same as Excel: sort by air var-cost/volume
-            max_items=need
+            prices=CV2,              # same ranking as friend’s version
+            max_items=need_t
         )
+        leftovers = need_t - packed
 
-        residual = need - picked
+        # Cost of shipping the packed containers
+        Cost_ocean_base = ocean_cost(full_containers, cont_cost, CF)
+        total_cost += Cost_ocean_base
 
-        # cost if we ship only the packed containers
-        cost_ocean_base = ocean_cost(containers, cont_cost, CF)
-        total_cost     += cost_ocean_base
-
-        # decide residual path
-        if residual.sum() > 0:
-            cost_air_residual = air_cost(residual, CV2, CF)
-            cost_next_container = (
-                ocean_cost(containers + 1, cont_cost, CF) - cost_ocean_base
+        # Decide how to move the leftovers
+        if leftovers.sum() > 0:
+            cost_by_air   = air_cost(leftovers, CV2, CF)
+            cost_extra_ct = (
+                ocean_cost(full_containers + 1, cont_cost, CF) - Cost_ocean_base
             )
 
-            if cost_air_residual < cost_next_container:
-                total_cost += cost_air_residual           # keep same container count
+            if cost_by_air < cost_extra_ct:
+                total_cost += cost_by_air          # keep container count
             else:
-                total_cost += cost_next_container         # take one more container
+                total_cost += cost_extra_ct        # open one more container
 
-    # ------------------ 3. purchase + extra holding -------------------------
-    total_ordered = missing.sum(axis=1)
-    total_cost   += total_ordered @ CP          # purchase
-    total_cost   += total_ordered @ CH          # one extra month holding
+    # ------------------------------------------------------------
+    # 3) Purchase cost + one extra holding month
+    # ------------------------------------------------------------
+    total_ordered = missing_inventory.sum(axis=1)
+    total_cost += np.dot(total_ordered, CP)   # purchase
+    total_cost += np.dot(total_ordered, CH)   # holding for one extra month
 
-    # add the rolling holding cost we tracked earlier
-    total_cost += holding_cost
+    # Add rolling holding cost from step (1)
+    total_cost += holding_cost_acc
+
     return total_cost
