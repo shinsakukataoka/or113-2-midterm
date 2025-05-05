@@ -72,7 +72,7 @@ def heuristic_cost(
         packed = fractional_knapsack(
             full_containers * container_capacity,
             volumes=Vi,
-            prices=CV2,              # same ranking as friend’s version
+            prices=CV2,
             max_items=need_t
         )
         leftovers = need_t - packed
@@ -93,9 +93,6 @@ def heuristic_cost(
             else:
                 total_cost += cost_extra_ct        # open one more container
 
-    # ------------------------------------------------------------
-    # 3) Purchase cost + one extra holding month
-    # ------------------------------------------------------------
     total_ordered = missing_inventory.sum(axis=1)
     total_cost += np.dot(total_ordered, CP)   # purchase
     total_cost += np.dot(total_ordered, CH)   # holding for one extra month

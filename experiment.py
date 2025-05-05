@@ -1,8 +1,9 @@
 import time, pandas as pd
 import config as C
+import os
 from instance_io     import load_instance
 from algo_naive      import naive_heuristic
-from algo_heuristic  import heuristic_cost          # ← NEW: updated import
+from algo_heuristic  import heuristic_cost
 from algo_lp         import solve_lp_relaxation
 
 rows = []
@@ -65,3 +66,10 @@ print(summary_heur.to_string(float_format="%.2f"))
 
 print("========== First 10 Raw Lines ==========")
 print(df.head(10).to_string(index=False, float_format="%.2f"))
+
+OUTPUT_DIR = "output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+csv_path = os.path.join(OUTPUT_DIR, "p5_results.csv")
+df.to_csv(csv_path, index=False, float_format="%.4f")
+print(f"\nResults written to {csv_path}")

@@ -1,4 +1,3 @@
-"""‘Order-just-enough’ express-only heuristic (original naive)."""
 import numpy as np
 
 def naive_heuristic(N, T, D, I0, I, CP, CV1, CF):
