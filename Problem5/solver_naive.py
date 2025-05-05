@@ -23,7 +23,7 @@ def calculate_total_cost(orders, data):
 
     for t in range(T):
         # Arrivals at start of month t
-        arrivals_t = transit[:, t].copy()
+        arrivals_t = transit[:, t].copy().astype(float) # Ensure arrivals_t starts as float
         for j in range(len(lead_times)): # 0:Exp, 1:Air, 2:Ocean
             arrival_month = lead_times[j] - 1
             if arrival_month == t:
