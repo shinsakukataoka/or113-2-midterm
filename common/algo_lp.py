@@ -1,7 +1,7 @@
 import gurobipy as gp
 from gurobipy import GRB
 import numpy as np
-import config as C
+from common import config as C
 
 def solve_lp_relaxation(
     N, T, D, I0, I, CH, CP, CV1, CV2, CV3,

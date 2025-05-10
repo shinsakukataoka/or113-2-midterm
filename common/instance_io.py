@@ -1,4 +1,6 @@
-import os, numpy as np, config as C
+import time, pandas as pd, os
+import numpy as np
+from common import config as C
 
 def load_instance(s_id: int, i_id: int):
     path = os.path.join(

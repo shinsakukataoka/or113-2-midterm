@@ -1,10 +1,9 @@
-# experiment.py
 import time, pandas as pd, os
-import config as C
-from instance_io     import load_instance
-from algo_naive      import naive_heuristic
-from algo_heuristic  import heuristic_cost
-from algo_lp         import solve_lp_relaxation
+from common import config as C
+from common.instance_io    import load_instance
+from common.algo_naive     import naive_heuristic
+from common.algo_heuristic import heuristic_cost
+from common.algo_lp        import solve_lp_relaxation
 
 # ----------------------------------------------------------------------
 def run(include_heuristic: bool = True,
@@ -43,20 +42,34 @@ def run(include_heuristic: bool = True,
             )
             t_lp = time.time() - t0
 
+            #rows.append([
+            #    s, i,
+            #    cost_lp,
+            #    cost_naive, cost_heur,
+            #    t_lp, t_naive, t_heur,
+            #    ((cost_naive - cost_lp) / cost_lp) * 100 if cost_lp > 0 else float("nan"),
+            #    ((cost_heur  - cost_lp) / cost_lp) * 100 if cost_lp > 0 else float("nan"),
+            #])
+
             rows.append([
                 s, i,
                 cost_lp,
-                cost_naive, cost_heur,
-                t_lp, t_naive, t_heur,
-                ((cost_naive - cost_lp) / cost_lp) * 100 if cost_lp > 0 else float("nan"),
+                cost_heur,           # ← put heuristic first
+                cost_naive,          # ← naïve second
+                t_lp,
+                t_heur,              # ← heuristic time first
+                t_naive,             # ← naïve time second
                 ((cost_heur  - cost_lp) / cost_lp) * 100 if cost_lp > 0 else float("nan"),
+                ((cost_naive - cost_lp) / cost_lp) * 100 if cost_lp > 0 else float("nan"),
             ])
 
     # ------------------- summarise & print ----------------------------
+    #cols = ["Scenario", "Instance", "LP Bound", "Naive", "Heuristic","Time LP (s)", "Time Naive (s)", "Time Heur (s)", "Gap Naive (%)", "Gap Heur (%)"]
+    
     cols = ["Scenario", "Instance", "LP Bound",
-            "Naive", "Heuristic",
-            "Time LP (s)", "Time Naive (s)", "Time Heur (s)",
-            "Gap Naive (%)", "Gap Heur (%)"]
+        "Heuristic", "Naive",
+        "Time LP (s)", "Time Heur (s)", "Time Naive (s)",
+        "Gap Heur (%)", "Gap Naive (%)"]
 
     df = pd.DataFrame(rows, columns=cols)
 
